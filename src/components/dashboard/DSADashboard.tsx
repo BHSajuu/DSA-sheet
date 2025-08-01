@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../../convex/_generated/api";
 import { DashboardHeader } from "./DashboardHeader";
 import { CategoryCard } from "./CategoryCard";
 import { AnalyticsPanel } from "./AnalyticsPanel";
@@ -8,40 +10,30 @@ import { useToast } from "@/hooks/use-toast";
 export const DSADashboard = () => {
   const [categories, setCategories] = useState(dsaData);
   const { toast } = useToast();
+  
+  // Convex hooks
+  const progress = useQuery(api.progress.getProgress);
+  const updateProgress = useMutation(api.progress.updateProgress);
 
-  // Load progress from localStorage on mount
+  // Load progress from Convex on mount
   useEffect(() => {
-    const savedProgress = localStorage.getItem('dsa-progress');
-    if (savedProgress) {
-      try {
-        const progress = JSON.parse(savedProgress);
-        setCategories(prevCategories =>
-          prevCategories.map(category => ({
-            ...category,
-            problems: category.problems.map(problem => ({
-              ...problem,
-              completed: progress[`${category.name}-${problem.id}`] || false
-            }))
+    if (progress) {
+      setCategories(prevCategories =>
+        prevCategories.map(category => ({
+          ...category,
+          problems: category.problems.map(problem => ({
+            ...problem,
+            completed: progress[`${category.name}-${problem.id}`] || false
           }))
-        );
-      } catch (error) {
-        console.error('Error loading progress:', error);
-      }
+        }))
+      );
     }
-  }, []);
+  }, [progress]);
 
-  // Save progress to localStorage whenever categories change
-  useEffect(() => {
-    const progress: Record<string, boolean> = {};
-    categories.forEach(category => {
-      category.problems.forEach(problem => {
-        progress[`${category.name}-${problem.id}`] = problem.completed;
-      });
-    });
-    localStorage.setItem('dsa-progress', JSON.stringify(progress));
-  }, [categories]);
-
-  const handleProblemToggle = (categoryName: string, problemId: number) => {
+  const handleProblemToggle = async (categoryName: string, problemId: number) => {
+    const problemKey = `${categoryName}-${problemId}`;
+    
+    // Optimistically update the UI
     setCategories(prevCategories =>
       prevCategories.map(category => {
         if (category.name === categoryName) {
@@ -51,6 +43,7 @@ export const DSADashboard = () => {
               if (problem.id === problemId) {
                 const newCompleted = !problem.completed;
                 
+                
                 // Show toast notification
                 toast({
                   title: newCompleted ? "Problem Completed! 🎉" : "Progress Updated",
@@ -59,6 +52,7 @@ export const DSADashboard = () => {
                     : `Marked "${problem.question}" as pending`,
                   duration: 3000,
                 });
+                
 
                 return { ...problem, completed: newCompleted };
               }
@@ -69,6 +63,15 @@ export const DSADashboard = () => {
         return category;
       })
     );
+
+    // Update in Convex database
+    try {
+      const currentCompleted = categories.find(c => c.name === categoryName)?.problems.find(p => p.id === problemId)?.completed || false;
+      await updateProgress({ problemKey, completed: !currentCompleted });
+    } catch (error) {
+      console.error('Error updating progress:', error);
+      toast({ title: "Error", description: "Failed to save progress", variant: "destructive" });
+    }
   };
 
   // Calculate totals
